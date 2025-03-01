@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Video Frame Extractor</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+    }
+    #thumbnails {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 20px;
+    }
+    .thumbnail {
+      width: 120px;
+      border: 1px solid #ccc;
+      padding: 2px;
+      cursor: pointer;
+    }
+    /* Fullscreen viewer modal */
+    #viewer {
+      display: none;
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: rgba(0, 0, 0, 0.8);
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      z-index: 1000;
+    }
+    #viewer img {
+      max-width: 90%;
+      max-height: 90%;
+      margin-bottom: 10px;
+    }
+    #viewer button {
+      background: #fff;
+      border: none;
+      padding: 10px 15px;
+      cursor: pointer;
+      margin: 0 5px;
+    }
+    #navButtons {
+      display: flex;
+      gap: 10px;
+    }
+    #closeBtn {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: #fff;
+      border: none;
+      padding: 10px;
+      cursor: pointer;
+    }
+    #processingStatus {
+      margin-top: 10px;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <h1>Video Frame Extractor</h1>
+  <input type="file" id="videoInput" accept="video/*">
+  <div id="processingStatus"></div>
+  <div id="thumbnails"></div>
+
+  <!-- Fullscreen viewer -->
+  <div id="viewer">
+    <button id="closeBtn">Close</button>
+    <img id="fullImage" src="" alt="Full Frame">
+    <div id="navButtons">
+      <button id="prevBtn">&lt; Prev</button>
+      <button id="nextBtn">Next &gt;</button>
+    </div>
+  </div>
+
+  <!-- Hidden video and canvas elements used for processing -->
+  <video id="video" style="display:none;"></video>
+  <canvas id="canvas" style="display:none;"></canvas>
+
+  <script>
+    const videoInput = document.getElementById('videoInput');
+    const processingStatus = document.getElementById('processingStatus');
+    const thumbnailsDiv = document.getElementById('thumbnails');
+    const videoEl = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    let extractedFrames = [];
+
+    videoInput.addEventListener('change', function(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      // Reset previous data
+      extractedFrames = [];
+      thumbnailsDiv.innerHTML = '';
+      processingStatus.textContent = 'Loading video...';
+      
+      const url = URL.createObjectURL(file);
+      videoEl.src = url;
+      videoEl.load();
+      
+      videoEl.addEventListener('loadedmetadata', function() {
+        // Assume default fps of 25 (adjust as needed)
+        const fps = 25;
+        const duration = videoEl.duration;
+        const totalFrames = Math.floor(duration * fps);
+        processingStatus.textContent = `Processing ${totalFrames} frames...`;
+        canvas.width = videoEl.videoWidth;
+        canvas.height = videoEl.videoHeight;
+        
+        let currentFrame = 0;
+        function captureFrame() {
+          if (currentFrame > totalFrames) {
+            processingStatus.textContent = `Done! Extracted ${extractedFrames.length} frames.`;
+            return;
+          }
+          videoEl.currentTime = currentFrame / fps;
+        }
+        
+        videoEl.addEventListener('seeked', function handler() {
+          ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+          const dataURL = canvas.toDataURL('image/jpeg');
+          extractedFrames.push(dataURL);
+          
+          const thumb = document.createElement('img');
+          thumb.src = dataURL;
+          thumb.className = 'thumbnail';
+          thumb.dataset.index = extractedFrames.length - 1;
+          thumb.title = `Frame ${extractedFrames.length - 1}`;
+          thumb.addEventListener('click', () => showFrame(parseInt(thumb.dataset.index)));
+          thumbnailsDiv.appendChild(thumb);
+          
+          currentFrame++;
+          setTimeout(captureFrame, 10);
+        });
+        captureFrame();
+      });
+    });
+    
+    // Viewer functionality
+    const viewer = document.getElementById('viewer');
+    const fullImage = document.getElementById('fullImage');
+    
+    function showFrame(index) {
+      fullImage.src = extractedFrames[index];
+      fullImage.dataset.index = index;
+      viewer.style.display = 'flex';
+    }
+    
+    document.getElementById('prevBtn').addEventListener('click', function() {
+      let index = parseInt(fullImage.dataset.index);
+      if (index > 0) {
+        index--;
+        fullImage.src = extractedFrames[index];
+        fullImage.dataset.index = index;
+      }
+    });
+    
+    document.getElementById('nextBtn').addEventListener('click', function() {
+      let index = parseInt(fullImage.dataset.index);
+      if (index < extractedFrames.length - 1) {
+        index++;
+        fullImage.src = extractedFrames[index];
+        fullImage.dataset.index = index;
+      }
+    });
+    
+    document.getElementById('closeBtn').addEventListener('click', function() {
+      viewer.style.display = 'none';
+    });
+  </script>
+</body>
+</html>
