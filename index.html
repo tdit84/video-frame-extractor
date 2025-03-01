@@ -14,11 +14,24 @@
       gap: 10px;
       margin-top: 20px;
     }
-    .thumbnail {
+    .thumbnailContainer {
+      position: relative;
       width: 120px;
+    }
+    .thumbnailContainer img {
+      width: 100%;
       border: 1px solid #ccc;
-      padding: 2px;
       cursor: pointer;
+    }
+    .frameNumberOverlay {
+      position: absolute;
+      bottom: 4px;
+      right: 4px;
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      padding: 2px 4px;
+      font-size: 10px;
+      border-radius: 3px;
     }
     /* Fullscreen viewer modal */
     #viewer {
@@ -91,7 +104,10 @@
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     let extractedFrames = [];
-
+    
+    // Set a default fps (adjust if needed)
+    const fps = 25;
+    
     videoInput.addEventListener('change', function(event) {
       const file = event.target.files[0];
       if (!file) return;
@@ -105,8 +121,6 @@
       videoEl.load();
       
       videoEl.addEventListener('loadedmetadata', function() {
-        // Assume default fps of 25 (adjust as needed)
-        const fps = 25;
         const duration = videoEl.duration;
         const totalFrames = Math.floor(duration * fps);
         processingStatus.textContent = `Processing ${totalFrames} frames...`;
@@ -116,7 +130,7 @@
         let currentFrame = 0;
         function captureFrame() {
           if (currentFrame > totalFrames) {
-            processingStatus.textContent = `Done! Extracted ${extractedFrames.length} frames.`;
+            processingStatus.textContent = `Done! Extracted ${extractedFrames.length} frames from a video of ${duration.toFixed(2)} seconds at ${fps} fps.`;
             return;
           }
           videoEl.currentTime = currentFrame / fps;
@@ -127,13 +141,22 @@
           const dataURL = canvas.toDataURL('image/jpeg');
           extractedFrames.push(dataURL);
           
+          // Create thumbnail container with overlay
+          const container = document.createElement('div');
+          container.className = 'thumbnailContainer';
           const thumb = document.createElement('img');
           thumb.src = dataURL;
-          thumb.className = 'thumbnail';
           thumb.dataset.index = extractedFrames.length - 1;
           thumb.title = `Frame ${extractedFrames.length - 1}`;
           thumb.addEventListener('click', () => showFrame(parseInt(thumb.dataset.index)));
-          thumbnailsDiv.appendChild(thumb);
+          container.appendChild(thumb);
+          
+          const overlay = document.createElement('div');
+          overlay.className = 'frameNumberOverlay';
+          overlay.textContent = extractedFrames.length - 1;
+          container.appendChild(overlay);
+          
+          thumbnailsDiv.appendChild(container);
           
           currentFrame++;
           setTimeout(captureFrame, 10);
@@ -142,7 +165,7 @@
       });
     });
     
-    // Viewer functionality
+    // Fullscreen viewer functionality
     const viewer = document.getElementById('viewer');
     const fullImage = document.getElementById('fullImage');
     
