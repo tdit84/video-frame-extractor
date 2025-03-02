@@ -50,6 +50,16 @@
       max-height: 90%;
       margin-bottom: 10px;
     }
+    #frameNumberViewer {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      padding: 5px 8px;
+      font-size: 14px;
+      border-radius: 4px;
+    }
     #viewer button {
       background: #fff;
       border: none;
@@ -74,31 +84,18 @@
       margin-top: 10px;
       font-style: italic;
     }
-    #frameInfo {
-      color: #fff;
-      font-size: 24px;
-      margin-bottom: 10px;
-    }
   </style>
 </head>
 <body>
   <h1>Video Frame Extractor</h1>
-  <div>
-    <label for="videoInput">Upload video: </label>
-    <input type="file" id="videoInput" accept="video/*">
-  </div>
-  <div>
-    <label for="fpsInput">Frame Rate (fps): </label>
-    <input type="number" id="fpsInput" value="30" min="1">
-    <small>(Set to 240 for slow motion videos)</small>
-  </div>
+  <input type="file" id="videoInput" accept="video/*">
   <div id="processingStatus"></div>
   <div id="thumbnails"></div>
 
-  <!-- Fullscreen viewer -->
+  <!-- Fullscreen viewer modal -->
   <div id="viewer">
     <button id="closeBtn">Close</button>
-    <div id="frameInfo"></div>
+    <div id="frameNumberViewer"></div>
     <img id="fullImage" src="" alt="Full Frame">
     <div id="navButtons">
       <button id="prevBtn">&lt; Prev</button>
@@ -112,13 +109,15 @@
 
   <script>
     const videoInput = document.getElementById('videoInput');
-    const fpsInput = document.getElementById('fpsInput');
     const processingStatus = document.getElementById('processingStatus');
     const thumbnailsDiv = document.getElementById('thumbnails');
     const videoEl = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     let extractedFrames = [];
+    
+    // Set a default fps (adjust if needed)
+    const fps = 30;
     
     videoInput.addEventListener('change', function(event) {
       const file = event.target.files[0];
@@ -128,9 +127,6 @@
       thumbnailsDiv.innerHTML = '';
       processingStatus.textContent = 'Loading video...';
       
-      // Read fps from input
-      let fps = parseFloat(fpsInput.value) || 25;
-      
       const url = URL.createObjectURL(file);
       videoEl.src = url;
       videoEl.load();
@@ -138,14 +134,14 @@
       videoEl.addEventListener('loadedmetadata', function() {
         const duration = videoEl.duration;
         const totalFrames = Math.floor(duration * fps);
-        processingStatus.textContent = `Processing ${totalFrames} frames from a ${duration.toFixed(2)} second video at ${fps} fps...`;
+        processingStatus.textContent = `Processing ${totalFrames} frames...`;
         canvas.width = videoEl.videoWidth;
         canvas.height = videoEl.videoHeight;
         
         let currentFrame = 0;
         function captureFrame() {
           if (currentFrame > totalFrames) {
-            processingStatus.textContent = `Done! Extracted ${extractedFrames.length} frames from a ${duration.toFixed(2)} second video at ${fps} fps.`;
+            processingStatus.textContent = `Done! Extracted ${extractedFrames.length} frames from a video of ${duration.toFixed(2)} seconds at ${fps} fps.`;
             return;
           }
           videoEl.currentTime = currentFrame / fps;
@@ -156,7 +152,7 @@
           const dataURL = canvas.toDataURL('image/jpeg');
           extractedFrames.push(dataURL);
           
-          // Create thumbnail container with overlay for frame number
+          // Create thumbnail container with overlay
           const container = document.createElement('div');
           container.className = 'thumbnailContainer';
           const thumb = document.createElement('img');
@@ -183,13 +179,13 @@
     // Viewer functionality
     const viewer = document.getElementById('viewer');
     const fullImage = document.getElementById('fullImage');
-    const frameInfo = document.getElementById('frameInfo');
+    const frameNumberViewer = document.getElementById('frameNumberViewer');
     
     function showFrame(index) {
       fullImage.src = extractedFrames[index];
       fullImage.dataset.index = index;
-      frameInfo.textContent = "Frame: " + index;
       viewer.style.display = 'flex';
+      frameNumberViewer.textContent = "Frame " + index;
     }
     
     document.getElementById('prevBtn').addEventListener('click', function() {
@@ -198,7 +194,7 @@
         index--;
         fullImage.src = extractedFrames[index];
         fullImage.dataset.index = index;
-        frameInfo.textContent = "Frame: " + index;
+        frameNumberViewer.textContent = "Frame " + index;
       }
     });
     
@@ -208,7 +204,7 @@
         index++;
         fullImage.src = extractedFrames[index];
         fullImage.dataset.index = index;
-        frameInfo.textContent = "Frame: " + index;
+        frameNumberViewer.textContent = "Frame " + index;
       }
     });
     
