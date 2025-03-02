@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <title>Video Frame Extractor</title>
+  <!-- Include MediaInfo.js from CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/mediainfo.js/dist/mediainfo.min.js"></script>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -108,34 +110,6 @@
   <canvas id="canvas" style="display:none;"></canvas>
 
   <script>
-    // Function to detect the video frame rate using requestVideoFrameCallback if available.
-    function detectFrameRate(videoElement) {
-      return new Promise((resolve, reject) => {
-        if (videoElement.requestVideoFrameCallback) {
-          let frameCount = 0;
-          let startTime = null;
-          function frameCallback(now, metadata) {
-            if (!startTime) {
-              startTime = metadata.mediaTime;
-            }
-            frameCount++;
-            const elapsed = metadata.mediaTime - startTime;
-            if (elapsed >= 1.0) { // measure over 1 second
-              videoElement.pause();
-              resolve(frameCount / elapsed);
-            } else {
-              videoElement.requestVideoFrameCallback(frameCallback);
-            }
-          }
-          videoElement.requestVideoFrameCallback(frameCallback);
-          videoElement.play();
-        } else {
-          // Fallback default fps if API not supported.
-          resolve(25);
-        }
-      });
-    }
-
     const videoInput = document.getElementById('videoInput');
     const processingStatus = document.getElementById('processingStatus');
     const thumbnailsDiv = document.getElementById('thumbnails');
@@ -144,9 +118,35 @@
     const ctx = canvas.getContext('2d');
     let extractedFrames = [];
     
-    // Use a let so that fps can be updated after detection.
+    // Default fps value (fallback)
     let fps = 25;
     
+    // Function using MediaInfo.js to try to read frame rate from file metadata
+    function getFrameRateFromFile(file) {
+      return new Promise((resolve, reject) => {
+        MediaInfo({ format: "object" }).then(mediaInfo => {
+          mediaInfo.analyzeData(
+            () => file.size,
+            (chunkSize, offset) => file.slice(offset, offset + chunkSize)
+          ).then(result => {
+            let detectedFps = 25; // default fallback
+            if (result && result.media && result.media.track) {
+              for (const track of result.media.track) {
+                if (track["@type"] === "Video" && track.FrameRate) {
+                  detectedFps = parseFloat(track.FrameRate);
+                  break;
+                }
+              }
+            }
+            resolve(detectedFps);
+          }).catch(err => {
+            console.error("MediaInfo error:", err);
+            resolve(25);
+          });
+        });
+      });
+    }
+
     videoInput.addEventListener('change', function(event) {
       const file = event.target.files[0];
       if (!file) return;
@@ -155,59 +155,60 @@
       thumbnailsDiv.innerHTML = '';
       processingStatus.textContent = 'Loading video...';
       
-      const url = URL.createObjectURL(file);
-      videoEl.src = url;
-      videoEl.load();
-      
-      videoEl.addEventListener('loadedmetadata', function() {
-        const duration = videoEl.duration;
-        // Reset time to 0 and detect frame rate first.
-        videoEl.currentTime = 0;
-        detectFrameRate(videoEl).then(detectedFps => {
-          fps = detectedFps;
-          console.log("Detected frame rate: " + fps);
-          const totalFrames = Math.floor(duration * fps);
-          processingStatus.textContent = `Processing ${totalFrames} frames...`;
-          canvas.width = videoEl.videoWidth;
-          canvas.height = videoEl.videoHeight;
-          
-          let currentFrame = 0;
-          function captureFrame() {
-            if (currentFrame > totalFrames) {
-              processingStatus.textContent = `Done! Extracted ${extractedFrames.length} frames from a video of ${duration.toFixed(2)} seconds at ${fps.toFixed(2)} fps.`;
-              return;
-            }
-            videoEl.currentTime = currentFrame / fps;
-          }
-          
-          videoEl.addEventListener('seeked', function handler() {
-            ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-            const dataURL = canvas.toDataURL('image/jpeg');
-            extractedFrames.push(dataURL);
-            
-            // Create thumbnail container with overlay
-            const container = document.createElement('div');
-            container.className = 'thumbnailContainer';
-            const thumb = document.createElement('img');
-            thumb.src = dataURL;
-            thumb.dataset.index = extractedFrames.length - 1;
-            thumb.title = `Frame ${extractedFrames.length - 1}`;
-            thumb.addEventListener('click', () => showFrame(parseInt(thumb.dataset.index)));
-            container.appendChild(thumb);
-            
-            const overlay = document.createElement('div');
-            overlay.className = 'frameNumberOverlay';
-            overlay.textContent = extractedFrames.length - 1;
-            container.appendChild(overlay);
-            
-            thumbnailsDiv.appendChild(container);
-            
-            currentFrame++;
-            setTimeout(captureFrame, 10);
-          });
-          captureFrame();
-        });
+      // Use FileReader to pass the file to MediaInfo
+      getFrameRateFromFile(file).then(detectedFps => {
+        fps = detectedFps;
+        console.log("Detected frame rate: " + fps);
+        // Now load the video into the hidden video element.
+        const url = URL.createObjectURL(file);
+        videoEl.src = url;
+        videoEl.load();
       });
+    });
+    
+    // Once metadata is loaded, start processing
+    videoEl.addEventListener('loadedmetadata', function() {
+      const duration = videoEl.duration;
+      const totalFrames = Math.floor(duration * fps);
+      processingStatus.textContent = `Processing ${totalFrames} frames...`;
+      canvas.width = videoEl.videoWidth;
+      canvas.height = videoEl.videoHeight;
+      
+      let currentFrame = 0;
+      function captureFrame() {
+        if (currentFrame > totalFrames) {
+          processingStatus.textContent = `Done! Extracted ${extractedFrames.length} frames from a video of ${duration.toFixed(2)} seconds at ${fps.toFixed(2)} fps.`;
+          return;
+        }
+        videoEl.currentTime = currentFrame / fps;
+      }
+      
+      videoEl.addEventListener('seeked', function handler() {
+        ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+        const dataURL = canvas.toDataURL('image/jpeg');
+        extractedFrames.push(dataURL);
+        
+        // Create thumbnail container with overlay showing frame number
+        const container = document.createElement('div');
+        container.className = 'thumbnailContainer';
+        const thumb = document.createElement('img');
+        thumb.src = dataURL;
+        thumb.dataset.index = extractedFrames.length - 1;
+        thumb.title = `Frame ${extractedFrames.length - 1}`;
+        thumb.addEventListener('click', () => showFrame(parseInt(thumb.dataset.index)));
+        container.appendChild(thumb);
+        
+        const overlay = document.createElement('div');
+        overlay.className = 'frameNumberOverlay';
+        overlay.textContent = extractedFrames.length - 1;
+        container.appendChild(overlay);
+        
+        thumbnailsDiv.appendChild(container);
+        
+        currentFrame++;
+        setTimeout(captureFrame, 10);
+      });
+      captureFrame();
     });
     
     // Viewer functionality
