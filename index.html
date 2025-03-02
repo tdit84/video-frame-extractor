@@ -50,16 +50,6 @@
       max-height: 90%;
       margin-bottom: 10px;
     }
-    #frameNumberViewer {
-      position: absolute;
-      top: 20px;
-      left: 20px;
-      background: rgba(0, 0, 0, 0.7);
-      color: #fff;
-      padding: 5px 8px;
-      font-size: 14px;
-      border-radius: 4px;
-    }
     #viewer button {
       background: #fff;
       border: none;
@@ -84,18 +74,31 @@
       margin-top: 10px;
       font-style: italic;
     }
+    #frameInfo {
+      color: #fff;
+      font-size: 24px;
+      margin-bottom: 10px;
+    }
   </style>
 </head>
 <body>
   <h1>Video Frame Extractor</h1>
-  <input type="file" id="videoInput" accept="video/*">
+  <div>
+    <label for="videoInput">Upload video: </label>
+    <input type="file" id="videoInput" accept="video/*">
+  </div>
+  <div>
+    <label for="fpsInput">Frame Rate (fps): </label>
+    <input type="number" id="fpsInput" value="30" min="1">
+    <small>(Set to 240 for slow motion videos)</small>
+  </div>
   <div id="processingStatus"></div>
   <div id="thumbnails"></div>
 
-  <!-- Fullscreen viewer modal -->
+  <!-- Fullscreen viewer -->
   <div id="viewer">
     <button id="closeBtn">Close</button>
-    <div id="frameNumberViewer"></div>
+    <div id="frameInfo"></div>
     <img id="fullImage" src="" alt="Full Frame">
     <div id="navButtons">
       <button id="prevBtn">&lt; Prev</button>
@@ -109,69 +112,13 @@
 
   <script>
     const videoInput = document.getElementById('videoInput');
+    const fpsInput = document.getElementById('fpsInput');
     const processingStatus = document.getElementById('processingStatus');
     const thumbnailsDiv = document.getElementById('thumbnails');
     const videoEl = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     let extractedFrames = [];
-    
-    // Default fps value; this will be updated after our estimation.
-    let fps = 25;
-    
-    // Compute a simple difference metric between two image data arrays
-    function computeImageDiff(data1, data2) {
-      let diff = 0;
-      let count = 0;
-      // Sample every 100th pixel (RGBA, so step is 4*100)
-      for (let i = 0; i < data1.length; i += 400) {
-        diff += Math.abs(data1[i] - data2[i]) +
-                Math.abs(data1[i+1] - data2[i+1]) +
-                Math.abs(data1[i+2] - data2[i+2]);
-        count++;
-      }
-      return diff / count;
-    }
-    
-    // Estimate effective frame rate by sampling frames over 1 second and comparing differences.
-    function estimateEffectiveFrameRate() {
-      return new Promise((resolve, reject) => {
-        let sampleInterval = 0.1; // seconds between samples
-        let maxSamples = 10; // sample over 1 second
-        let samples = [];
-        let sampleCount = 0;
-        let currentTime = 0;
-        
-        function captureSample() {
-          if (sampleCount >= maxSamples) {
-            // Compare consecutive samples
-            let distinctCount = 1; // First frame is counted
-            for (let i = 1; i < samples.length; i++) {
-              let diff = computeImageDiff(samples[i-1], samples[i]);
-              // Threshold value (adjust as needed)
-              if (diff > 10) {
-                distinctCount++;
-              }
-            }
-            // Effective frame rate = distinct changes per second
-            let effectiveFps = distinctCount / (sampleInterval * (maxSamples - 1));
-            resolve(effectiveFps);
-            return;
-          }
-          videoEl.currentTime = currentTime;
-        }
-        
-        videoEl.addEventListener('seeked', function sampleHandler() {
-          ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-          let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-          samples.push(imageData);
-          sampleCount++;
-          currentTime += sampleInterval;
-          captureSample();
-        });
-        captureSample();
-      });
-    }
     
     videoInput.addEventListener('change', function(event) {
       const file = event.target.files[0];
@@ -181,61 +128,68 @@
       thumbnailsDiv.innerHTML = '';
       processingStatus.textContent = 'Loading video...';
       
+      // Read fps from input
+      let fps = parseFloat(fpsInput.value) || 25;
+      
       const url = URL.createObjectURL(file);
       videoEl.src = url;
       videoEl.load();
       
       videoEl.addEventListener('loadedmetadata', function() {
+        const duration = videoEl.duration;
+        const totalFrames = Math.floor(duration * fps);
+        processingStatus.textContent = `Processing ${totalFrames} frames from a ${duration.toFixed(2)} second video at ${fps} fps...`;
         canvas.width = videoEl.videoWidth;
         canvas.height = videoEl.videoHeight;
-        const duration = videoEl.duration;
-        processingStatus.textContent = 'Estimating effective frame rate...';
-        estimateEffectiveFrameRate().then(detectedFps => {
-          fps = detectedFps;
-          console.log("Estimated effective frame rate: " + fps);
-          const totalFrames = Math.floor(duration * fps);
-          processingStatus.textContent = `Processing ${totalFrames} frames...`;
-          let currentFrame = 0;
-          videoEl.addEventListener('seeked', function handler() {
-            ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-            const dataURL = canvas.toDataURL('image/jpeg');
-            extractedFrames.push(dataURL);
-            
-            // Create thumbnail container with overlay showing frame number
-            const container = document.createElement('div');
-            container.className = 'thumbnailContainer';
-            const thumb = document.createElement('img');
-            thumb.src = dataURL;
-            thumb.dataset.index = extractedFrames.length - 1;
-            thumb.title = `Frame ${extractedFrames.length - 1}`;
-            thumb.addEventListener('click', () => showFrame(parseInt(thumb.dataset.index)));
-            container.appendChild(thumb);
-            
-            const overlay = document.createElement('div');
-            overlay.className = 'frameNumberOverlay';
-            overlay.textContent = extractedFrames.length - 1;
-            container.appendChild(overlay);
-            
-            thumbnailsDiv.appendChild(container);
-            
-            currentFrame++;
-            setTimeout(() => { videoEl.currentTime = currentFrame / fps; }, 10);
-          });
-          videoEl.currentTime = 0;
+        
+        let currentFrame = 0;
+        function captureFrame() {
+          if (currentFrame > totalFrames) {
+            processingStatus.textContent = `Done! Extracted ${extractedFrames.length} frames from a ${duration.toFixed(2)} second video at ${fps} fps.`;
+            return;
+          }
+          videoEl.currentTime = currentFrame / fps;
+        }
+        
+        videoEl.addEventListener('seeked', function handler() {
+          ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+          const dataURL = canvas.toDataURL('image/jpeg');
+          extractedFrames.push(dataURL);
+          
+          // Create thumbnail container with overlay for frame number
+          const container = document.createElement('div');
+          container.className = 'thumbnailContainer';
+          const thumb = document.createElement('img');
+          thumb.src = dataURL;
+          thumb.dataset.index = extractedFrames.length - 1;
+          thumb.title = `Frame ${extractedFrames.length - 1}`;
+          thumb.addEventListener('click', () => showFrame(parseInt(thumb.dataset.index)));
+          container.appendChild(thumb);
+          
+          const overlay = document.createElement('div');
+          overlay.className = 'frameNumberOverlay';
+          overlay.textContent = extractedFrames.length - 1;
+          container.appendChild(overlay);
+          
+          thumbnailsDiv.appendChild(container);
+          
+          currentFrame++;
+          setTimeout(captureFrame, 10);
         });
+        captureFrame();
       });
     });
     
     // Viewer functionality
     const viewer = document.getElementById('viewer');
     const fullImage = document.getElementById('fullImage');
-    const frameNumberViewer = document.getElementById('frameNumberViewer');
+    const frameInfo = document.getElementById('frameInfo');
     
     function showFrame(index) {
       fullImage.src = extractedFrames[index];
       fullImage.dataset.index = index;
+      frameInfo.textContent = "Frame: " + index;
       viewer.style.display = 'flex';
-      frameNumberViewer.textContent = "Frame " + index;
     }
     
     document.getElementById('prevBtn').addEventListener('click', function() {
@@ -244,7 +198,7 @@
         index--;
         fullImage.src = extractedFrames[index];
         fullImage.dataset.index = index;
-        frameNumberViewer.textContent = "Frame " + index;
+        frameInfo.textContent = "Frame: " + index;
       }
     });
     
@@ -254,7 +208,7 @@
         index++;
         fullImage.src = extractedFrames[index];
         fullImage.dataset.index = index;
-        frameNumberViewer.textContent = "Frame " + index;
+        frameInfo.textContent = "Frame: " + index;
       }
     });
     
