@@ -3,8 +3,6 @@
 <head>
   <meta charset="UTF-8">
   <title>Video Frame Extractor</title>
-  <!-- Include MediaInfo.js from CDN -->
-  <script src="https://cdn.jsdelivr.net/npm/mediainfo.js/dist/mediainfo.min.js"></script>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -118,35 +116,63 @@
     const ctx = canvas.getContext('2d');
     let extractedFrames = [];
     
-    // Default fps value (fallback)
+    // Default fps value; this will be updated after our estimation.
     let fps = 25;
     
-    // Function using MediaInfo.js to try to read frame rate from file metadata
-    function getFrameRateFromFile(file) {
+    // Compute a simple difference metric between two image data arrays
+    function computeImageDiff(data1, data2) {
+      let diff = 0;
+      let count = 0;
+      // Sample every 100th pixel (RGBA, so step is 4*100)
+      for (let i = 0; i < data1.length; i += 400) {
+        diff += Math.abs(data1[i] - data2[i]) +
+                Math.abs(data1[i+1] - data2[i+1]) +
+                Math.abs(data1[i+2] - data2[i+2]);
+        count++;
+      }
+      return diff / count;
+    }
+    
+    // Estimate effective frame rate by sampling frames over 1 second and comparing differences.
+    function estimateEffectiveFrameRate() {
       return new Promise((resolve, reject) => {
-        MediaInfo({ format: "object" }).then(mediaInfo => {
-          mediaInfo.analyzeData(
-            () => file.size,
-            (chunkSize, offset) => file.slice(offset, offset + chunkSize)
-          ).then(result => {
-            let detectedFps = 25; // default fallback
-            if (result && result.media && result.media.track) {
-              for (const track of result.media.track) {
-                if (track["@type"] === "Video" && track.FrameRate) {
-                  detectedFps = parseFloat(track.FrameRate);
-                  break;
-                }
+        let sampleInterval = 0.1; // seconds between samples
+        let maxSamples = 10; // sample over 1 second
+        let samples = [];
+        let sampleCount = 0;
+        let currentTime = 0;
+        
+        function captureSample() {
+          if (sampleCount >= maxSamples) {
+            // Compare consecutive samples
+            let distinctCount = 1; // First frame is counted
+            for (let i = 1; i < samples.length; i++) {
+              let diff = computeImageDiff(samples[i-1], samples[i]);
+              // Threshold value (adjust as needed)
+              if (diff > 10) {
+                distinctCount++;
               }
             }
-            resolve(detectedFps);
-          }).catch(err => {
-            console.error("MediaInfo error:", err);
-            resolve(25);
-          });
+            // Effective frame rate = distinct changes per second
+            let effectiveFps = distinctCount / (sampleInterval * (maxSamples - 1));
+            resolve(effectiveFps);
+            return;
+          }
+          videoEl.currentTime = currentTime;
+        }
+        
+        videoEl.addEventListener('seeked', function sampleHandler() {
+          ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+          let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+          samples.push(imageData);
+          sampleCount++;
+          currentTime += sampleInterval;
+          captureSample();
         });
+        captureSample();
       });
     }
-
+    
     videoInput.addEventListener('change', function(event) {
       const file = event.target.files[0];
       if (!file) return;
@@ -155,60 +181,49 @@
       thumbnailsDiv.innerHTML = '';
       processingStatus.textContent = 'Loading video...';
       
-      // Use FileReader to pass the file to MediaInfo
-      getFrameRateFromFile(file).then(detectedFps => {
-        fps = detectedFps;
-        console.log("Detected frame rate: " + fps);
-        // Now load the video into the hidden video element.
-        const url = URL.createObjectURL(file);
-        videoEl.src = url;
-        videoEl.load();
-      });
-    });
-    
-    // Once metadata is loaded, start processing
-    videoEl.addEventListener('loadedmetadata', function() {
-      const duration = videoEl.duration;
-      const totalFrames = Math.floor(duration * fps);
-      processingStatus.textContent = `Processing ${totalFrames} frames...`;
-      canvas.width = videoEl.videoWidth;
-      canvas.height = videoEl.videoHeight;
+      const url = URL.createObjectURL(file);
+      videoEl.src = url;
+      videoEl.load();
       
-      let currentFrame = 0;
-      function captureFrame() {
-        if (currentFrame > totalFrames) {
-          processingStatus.textContent = `Done! Extracted ${extractedFrames.length} frames from a video of ${duration.toFixed(2)} seconds at ${fps.toFixed(2)} fps.`;
-          return;
-        }
-        videoEl.currentTime = currentFrame / fps;
-      }
-      
-      videoEl.addEventListener('seeked', function handler() {
-        ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-        const dataURL = canvas.toDataURL('image/jpeg');
-        extractedFrames.push(dataURL);
-        
-        // Create thumbnail container with overlay showing frame number
-        const container = document.createElement('div');
-        container.className = 'thumbnailContainer';
-        const thumb = document.createElement('img');
-        thumb.src = dataURL;
-        thumb.dataset.index = extractedFrames.length - 1;
-        thumb.title = `Frame ${extractedFrames.length - 1}`;
-        thumb.addEventListener('click', () => showFrame(parseInt(thumb.dataset.index)));
-        container.appendChild(thumb);
-        
-        const overlay = document.createElement('div');
-        overlay.className = 'frameNumberOverlay';
-        overlay.textContent = extractedFrames.length - 1;
-        container.appendChild(overlay);
-        
-        thumbnailsDiv.appendChild(container);
-        
-        currentFrame++;
-        setTimeout(captureFrame, 10);
+      videoEl.addEventListener('loadedmetadata', function() {
+        canvas.width = videoEl.videoWidth;
+        canvas.height = videoEl.videoHeight;
+        const duration = videoEl.duration;
+        processingStatus.textContent = 'Estimating effective frame rate...';
+        estimateEffectiveFrameRate().then(detectedFps => {
+          fps = detectedFps;
+          console.log("Estimated effective frame rate: " + fps);
+          const totalFrames = Math.floor(duration * fps);
+          processingStatus.textContent = `Processing ${totalFrames} frames...`;
+          let currentFrame = 0;
+          videoEl.addEventListener('seeked', function handler() {
+            ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+            const dataURL = canvas.toDataURL('image/jpeg');
+            extractedFrames.push(dataURL);
+            
+            // Create thumbnail container with overlay showing frame number
+            const container = document.createElement('div');
+            container.className = 'thumbnailContainer';
+            const thumb = document.createElement('img');
+            thumb.src = dataURL;
+            thumb.dataset.index = extractedFrames.length - 1;
+            thumb.title = `Frame ${extractedFrames.length - 1}`;
+            thumb.addEventListener('click', () => showFrame(parseInt(thumb.dataset.index)));
+            container.appendChild(thumb);
+            
+            const overlay = document.createElement('div');
+            overlay.className = 'frameNumberOverlay';
+            overlay.textContent = extractedFrames.length - 1;
+            container.appendChild(overlay);
+            
+            thumbnailsDiv.appendChild(container);
+            
+            currentFrame++;
+            setTimeout(() => { videoEl.currentTime = currentFrame / fps; }, 10);
+          });
+          videoEl.currentTime = 0;
+        });
       });
-      captureFrame();
     });
     
     // Viewer functionality
